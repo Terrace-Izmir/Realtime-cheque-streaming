@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Sevk Takip — Mobil & Masaüstü</title>
+    <style>
+      :root{
+        --bg:#f6f8fb; --card:#ffffff; --accent:#0b67ff; --muted:#6b7280; --success:#0ea5a4; --danger:#ef4444;
+        --radius:12px; --gap:12px; --pad:14px;
+      }
+      html,body{height:100%;margin:0;font-family:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;color:#0f172a;background:var(--bg)}
+      .app{max-width:1100px;margin:0 auto;padding:16px}
+      header.appbar{display:flex;align-items:center;gap:12px;justify-content:space-between}
+      .brand{display:flex;align-items:center;gap:12px}
+      .logo{width:44px;height:44px;border-radius:10px;background:linear-gradient(135deg,#0b67ff,#00d4ff);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700}
+      h1{font-size:18px;margin:0}
+      .controls{display:flex;gap:8px;align-items:center}
+      .chip{background:var(--card);border-radius:999px;padding:8px 12px;border:1px solid #e6eef9;color:var(--muted);font-weight:600}
+
+      /* filters */
+      .filters{display:flex;gap:8px;margin:14px 0;flex-wrap:wrap}
+      .search{flex:1;display:flex}
+      .search input{flex:1;padding:10px;border-radius:10px;border:1px solid #e6eef9}
+      .btn{background:var(--accent);color:#fff;padding:10px 14px;border-radius:10px;border:none;font-weight:700}
+      .btn.secondary{background:transparent;color:var(--accent);border:1px solid rgba(11,103,255,0.12)}
+
+      /* grid */
+      .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+      .card{background:var(--card);border-radius:var(--radius);padding:12px;box-shadow:0 1px 2px rgba(8,15,32,0.04);border:1px solid #eef4ff}
+      .card .meta{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+      .orderno{font-weight:800;color:#0b67ff}
+      .site{color:var(--muted);font-size:13px}
+      .items{color:#0f172a;font-size:14px;margin-top:6px}
+      .status{padding:6px 8px;border-radius:8px;font-weight:700;font-size:13px}
+      .status.created{background:#fff7ed;color:#92400e;border:1px solid #ffedd5}
+      .status.in_transit{background:#ecfeff;color:#036666;border:1px solid #cffafe}
+      .status.completed{background:#f0fdf4;color:#14532d;border:1px solid #bbf7d0}
+      .card .footer{display:flex;gap:8px;margin-top:10px}
+      .card button{flex:1;padding:10px;border-radius:8px;border:1px solid #e6eef9;background:transparent}
+
+      /* modal */
+      .modal-backdrop{position:fixed;inset:0;background:rgba(6,8,15,0.4);display:none;align-items:flex-end}
+      .modal{background:var(--card);width:100%;max-width:720px;margin:0 auto;border-radius:16px 16px 0 0;padding:16px}
+      .modal .row{display:flex;gap:8px;margin-bottom:8px}
+      .modal input,.modal textarea{flex:1;padding:10px;border-radius:10px;border:1px solid #eef4ff}
+      .modal .actions{display:flex;gap:8px;margin-top:8px}
+
+      /* toast */
+      .toast{position:fixed;right:16px;bottom:16px;background:#0b67ff;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 6px 18px rgba(11,103,255,0.12);display:none}
+
+      @media(min-width:900px){.modal-backdrop{align-items:center}.modal{border-radius:16px;padding:20px}}
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header class="appbar">
+        <div class="brand">
+          <div class="logo">ST</div>
+          <div>
+            <h1>Sevk Takip</h1>
+            <div style="font-size:12px;color:var(--muted)">Mobil & Masaüstü uyumlu</div>
+          </div>
+        </div>
+        <div class="controls">
+          <div class="chip" id="roleChip">Rol: <strong id="roleLabel">driver</strong></div>
+          <button class="chip" id="changeRole">Değiştir</button>
+          <button class="chip" id="darkToggle">🌙</button>
+          <button class="btn" id="btnNew">+ Yeni Sipariş</button>
+        </div>
+      </header>
+
+      <section class="filters">
+        <div class="search"><input id="q" placeholder="Sipariş no, şantiye, sürücü ara" /></div>
+        <select id="statusFilter" style="padding:10px;border-radius:10px;border:1px solid #eef4ff">
+          <option value="all">Tümü</option>
+          <option value="created">Yeni</option>
+          <option value="in_transit">Yolda</option>
+          <option value="completed">Teslim</option>
+        </select>
+        <button class="btn secondary" id="btnRefresh">Yenile</button>
+      </section>
+
+      <main id="mainGrid" class="grid">
+        <!-- order cards injected here -->
+      </main>
+
+      <div class="modal-backdrop" id="modalBackdrop">
+        <div class="modal" role="dialog" aria-modal="true">
+          <div id="modalContent"></div>
+          <div style="text-align:right;margin-top:8px"><button id="closeModal" class="btn secondary">Kapat</button></div>
+        </div>
+      </div>
+
+      <div class="toast" id="toast"></div>
+    </div>
+
+    <audio id="pingSound" src="/ping.mp3" preload="auto"></audio>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+      // Lightweight UX-focused frontend preserving existing API
+      const socket = io();
+      let role = localStorage.getItem('role') || 'driver';
+      document.getElementById('roleLabel').textContent = role;
+      socket.emit('join', role === 'driver' ? 'drivers' : role);
+
+      const state = { orders: [] };
+      const qEl = document.getElementById('q');
+      const statusFilter = document.getElementById('statusFilter');
+      const grid = document.getElementById('mainGrid');
+      const toast = document.getElementById('toast');
+      const ping = document.getElementById('pingSound');
+      const darkToggle = document.getElementById('darkToggle');
+
+      // Theme (dark mode) helpers
+      function applyTheme(theme){
+        if (theme === 'dark'){
+          document.documentElement.style.setProperty('--bg','#071025');
+          document.documentElement.style.setProperty('--card','#071a2b');
+          document.documentElement.style.setProperty('--accent','#3aa0ff');
+          document.documentElement.style.setProperty('--muted','#9aa9b7');
+          document.documentElement.style.setProperty('--success','#06b6a4');
+        } else {
+          document.documentElement.style.setProperty('--bg','#f6f8fb');
+          document.documentElement.style.setProperty('--card','#ffffff');
+          document.documentElement.style.setProperty('--accent','#0b67ff');
+          document.documentElement.style.setProperty('--muted','#6b7280');
+          document.documentElement.style.setProperty('--success','#0ea5a4');
+        }
+      }
+      const savedTheme = localStorage.getItem('theme') || 'light'; applyTheme(savedTheme); darkToggle.textContent = savedTheme === 'dark' ? '☀️' : '🌙';
+      darkToggle.onclick = ()=>{ const next = (localStorage.getItem('theme')==='dark') ? 'light' : 'dark'; localStorage.setItem('theme', next); applyTheme(next); darkToggle.textContent = next==='dark' ? '☀️' : '🌙'; };
+
+      function showToast(text){ toast.textContent = text; toast.style.display = 'block'; setTimeout(()=> toast.style.display='none', 3500); }
+
+      // server-side search: fetch with ?q= and status handled client-side
+      let fetchTimer = null;
+      async function fetchOrders(q){
+        try{
+          const url = '/api/orders' + (q ? ('?q='+encodeURIComponent(q)) : '');
+          const res = await fetch(url);
+          state.orders = await res.json();
+          render();
+        }catch(e){ console.error(e); showToast('Sunucuya bağlanılamadı'); }
+      }
+
+      // debounce search input and use server-side q
+      qEl.addEventListener('input', ()=>{
+        clearTimeout(fetchTimer);
+        fetchTimer = setTimeout(()=>{ fetchOrders(qEl.value.trim()); }, 350);
+      });
+
+      function render(){
+        grid.innerHTML='';
+        const q = qEl.value.trim().toLowerCase();
+        const st = statusFilter.value;
+        const items = state.orders.filter(o=>{
+          if (st!=='all' && o.status!==st) return false;
+          if (!q) return true;
+          return (o.orderNumber||'').toLowerCase().includes(q) || (o.site && o.site.name && o.site.name.toLowerCase().includes(q)) || (o.driver||'').toLowerCase().includes(q);
+        });
+
+        items.forEach(o=>{
+          const c = document.createElement('article'); c.className='card';
+          const statusClass = o.status === 'created' ? 'created' : (o.status === 'in_transit' ? 'in_transit' : 'completed');
+          c.innerHTML = `
+            <div class="meta">
+              <div>
+                <div class="orderno">${o.orderNumber||('#'+o.id)}</div>
+                <div class="site">${o.site && o.site.name ? (o.site.name + (o.site.address ? ' • ' + o.site.address : '')) : ''}</div>
+              </div>
+              <div><div class="status ${statusClass}">${o.status.replace('_',' ')}</div></div>
+            </div>
+            <div class="items">Ürünler: ${(o.items||[]).join(', ')}</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:6px">Oluşturuldu: ${o.createdAt ? new Date(o.createdAt).toLocaleString() : ''}</div>
+          `;
+
+          const footer = document.createElement('div'); footer.className='footer';
+          // driver actions
+          if (role === 'driver'){
+            if (o.status === 'created'){
+              const btn = document.createElement('button'); btn.textContent='Yola Çık / Fiş Başlat'; btn.onclick = ()=> openStartModal(o); footer.appendChild(btn);
+            } else if (o.status === 'in_transit'){
+              const btn = document.createElement('button'); btn.textContent='Teslim / Fiş Bitir'; btn.onclick = ()=> openCompleteModal(o); footer.appendChild(btn);
+            }
+          }
+
+          // common view details
+          const det = document.createElement('button'); det.textContent='Detay'; det.onclick = ()=> openDetailModal(o); footer.appendChild(det);
+
+          c.appendChild(footer);
+          grid.appendChild(c);
+        });
+      }
+
+      // Modal helpers
+      const modalBackdrop = document.getElementById('modalBackdrop');
+      const modalContent = document.getElementById('modalContent');
+      function openModal(html){ modalContent.innerHTML = ''; modalContent.appendChild(html); modalBackdrop.style.display='flex'; }
+      function closeModal(){ modalBackdrop.style.display='none'; }
+      document.getElementById('closeModal').onclick = closeModal;
+
+      // Create form modal
+      document.getElementById('btnNew').addEventListener('click', ()=>{
+        const wrapper = document.createElement('div');
+        wrapper.innerHTML = `
+          <h3>Yeni Sipariş</h3>
+          <div class="row"><input id="m_orderNumber" placeholder="Sipariş No (opsiyonel)" /></div>
+          <div class="row"><input id="m_siteName" placeholder="Şantiye / Proje Adı" /></div>
+          <div class="row"><input id="m_siteAddress" placeholder="Şantiye Adresi" /></div>
+          <div class="row"><input id="m_driver" placeholder="Sürücü Adı / Telefon" /></div>
+          <div class="row"><textarea id="m_items" placeholder="Ürünler, virgülle ayırın"></textarea></div>
+          <div class="actions"><button id="createSubmit" class="btn">Oluştur</button><button id="createCancel" class="btn secondary">İptal</button></div>
+        `;
+        openModal(wrapper);
+        document.getElementById('createCancel').onclick = closeModal;
+        document.getElementById('createSubmit').onclick = async ()=>{
+          const payload = {
+            orderNumber: document.getElementById('m_orderNumber').value || undefined,
+            siteName: document.getElementById('m_siteName').value,
+            siteAddress: document.getElementById('m_siteAddress').value,
+            driver: document.getElementById('m_driver').value,
+            items: (document.getElementById('m_items').value||'').split(',').map(s=>s.trim()).filter(Boolean)
+          };
+          try{
+            const res = await fetch('/api/orders', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+            const data = await res.json();
+            showToast('Sipariş oluşturuldu'); closeModal(); fetchOrders();
+          }catch(e){ console.error(e); showToast('Oluşturulamadı'); }
+        };
+      });
+
+      // Detail modal
+      function openDetailModal(o){
+        const el = document.createElement('div');
+        el.innerHTML = `
+          <h3>Detay — ${o.orderNumber||('#'+o.id)}</h3>
+          <div style="font-size:13px;color:var(--muted)">${o.site && o.site.name ? o.site.name + (o.site.address ? ' • '+o.site.address : '') : ''}</div>
+          <div style="margin-top:8px">Sürücü: ${o.driver||''}</div>
+          <div style="margin-top:8px">Ürünler: ${(o.items||[]).join(', ')}</div>
+          <div style="margin-top:8px">Durum: ${o.status}</div>
+        `;
+        if (o.startPhoto){ const img = document.createElement('img'); img.src = '/uploads/'+o.startPhoto; img.style.maxWidth='100%'; img.style.marginTop='8px'; el.appendChild(img); }
+        if (o.completePhoto){ const img2 = document.createElement('img'); img2.src = '/uploads/'+o.completePhoto; img2.style.maxWidth='100%'; img2.style.marginTop='8px'; el.appendChild(img2); }
+        if (o.startAnswers){ const d = document.createElement('div'); d.style.marginTop='8px'; d.innerHTML = '<strong>Başlangıç cevapları:</strong><br>'+Object.entries(o.startAnswers).map(e=>`${e[0]}: ${e[1]}`).join('<br>'); el.appendChild(d); }
+        if (o.completeAnswers){ const d2 = document.createElement('div'); d2.style.marginTop='8px'; d2.innerHTML = '<strong>Teslim cevapları:</strong><br>'+Object.entries(o.completeAnswers).map(e=>`${e[0]}: ${e[1]}`).join('<br>'); el.appendChild(d2); }
+        openModal(el);
+      }
+
+      // Start / Complete modals (with camera-friendly input)
+      function openStartModal(o){
+        const el = document.createElement('div');
+        el.innerHTML = `
+          <h3>Fiş Başlat — ${o.orderNumber||('#'+o.id)}</h3>
+          <div class="row"><input id="s_plaka" placeholder="Araç plaka" /></div>
+          <div class="row"><label style="font-size:13px;color:var(--muted)">Fotoğraf (kamera)</label><input id="s_photo" type="file" accept="image/*" capture="environment" /></div>
+          <div class="actions"><button id="s_submit" class="btn">Başlat</button><button id="s_cancel" class="btn secondary">İptal</button></div>
+        `;
+        openModal(el);
+        document.getElementById('s_cancel').onclick = closeModal;
+        document.getElementById('s_submit').onclick = async ()=>{
+          const answers = { 'Araç plaka': document.getElementById('s_plaka').value };
+          const fileInput = document.getElementById('s_photo');
+          const fd = new FormData(); fd.append('answers', JSON.stringify(answers));
+          if (fileInput.files.length) fd.append('photo', fileInput.files[0], fileInput.files[0].name);
+          try{
+            await fetch(`/api/orders/${o.id}/start`, { method:'POST', body: fd });
+            showToast('Sevk başlatıldı'); closeModal(); fetchOrders();
+          }catch(e){ console.error(e); showToast('Başlatılamadı'); }
+        };
+      }
+
+      function openCompleteModal(o){
+        const el = document.createElement('div');
+        el.innerHTML = `
+          <h3>Teslim Et — ${o.orderNumber||('#'+o.id)}</h3>
+          <div class="row"><input id="c_teslimeden" placeholder="Teslim eden (isim/telefon)" /></div>
+          <div class="row"><input id="c_fisno" placeholder="Fiş numarası" /></div>
+          <div class="row"><label style="font-size:13px;color:var(--muted)">Teslim fotoğrafı (kamera)</label><input id="c_photo" type="file" accept="image/*" capture="environment" /></div>
+          <div class="actions"><button id="c_submit" class="btn">Tamamla</button><button id="c_cancel" class="btn secondary">İptal</button></div>
+        `;
+        openModal(el);
+        document.getElementById('c_cancel').onclick = closeModal;
+        document.getElementById('c_submit').onclick = async ()=>{
+          const answers = { 'Teslim eden': document.getElementById('c_teslimeden').value, 'Fiş numarası': document.getElementById('c_fisno').value };
+          const fileInput = document.getElementById('c_photo');
+          const fd = new FormData(); fd.append('answers', JSON.stringify(answers));
+          if (fileInput.files.length) fd.append('photo', fileInput.files[0], fileInput.files[0].name);
+          try{
+            await fetch(`/api/orders/${o.id}/complete`, { method:'POST', body: fd });
+            showToast('Teslim kaydedildi'); closeModal(); fetchOrders();
+          }catch(e){ console.error(e); showToast('Tamamlanamadı'); }
+        };
+      }
+
+      // Socket events
+      socket.on('order_created', data=>{ playNotify('Yeni sipariş: '+(data.orderNumber||data.id)); fetchOrders(); });
+      socket.on('dispatch_started', data=>{ playNotify('Sevk başladı: '+(data.orderNumber||data.id)); fetchOrders(); });
+      socket.on('dispatch_completed', data=>{ playNotify('Sevk tamamlandı: '+(data.orderNumber||data.id)); fetchOrders(); });
+
+      function playNotify(text){ try{ if (Notification && Notification.permission !== 'granted') Notification.requestPermission(); if (Notification && Notification.permission === 'granted') new Notification(text); }catch(e){} try{ ping.play(); }catch(e){} showToast(text); }
+
+      // role change
+      document.getElementById('changeRole').addEventListener('click', ()=>{
+        const r = prompt('Rolünüzü girin: driver / dispatcher / accounting', role)||role; role = r; localStorage.setItem('role', role); document.getElementById('roleLabel').textContent = role; socket.emit('join', role === 'driver' ? 'drivers' : role); showToast('Rol: '+role); fetchOrders();
+      });
+
+  document.getElementById('btnRefresh').addEventListener('click', ()=> fetchOrders(qEl.value.trim()));
+  qEl.addEventListener('input', render);
+  statusFilter.addEventListener('change', render);
+
+      // init
+      fetchOrders();
+    </script>
+  </body>
+</html>
